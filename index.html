@@ -979,20 +979,10 @@ function openChartFullscreen() {
     const ds = d.toISOString().slice(0, 10);
     const label = i === 0 ? 'Today' : i === 1 ? 'Yesterday' : d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
     labels.push(label);
-<<<<<<< HEAD
     const dayOrders = orders.filter(o => (o.tanggal_pesan || '').slice(0, 10) === ds);
     let cnt = 0;
     dayOrders.forEach(o => {
       if ((o.nama_menu || '').trim() === menuName) cnt += parseInt(o.jumlah_dipesan) || 1;
-=======
-    const dayOrders = orders.filter(o => o.date === ds);
-    let cnt = 0;
-    dayOrders.forEach(o => {
-      o.items.split('\n').forEach(line => {
-        const m = line.match(/(\d+)x (.+)/);
-        if (m && m[2].trim() === menuName) cnt += parseInt(m[1]);
-      });
->>>>>>> d6cdf7449ddd362df99a085d72ffc05123caf35d
     });
     vals.push(cnt);
   }
