@@ -193,9 +193,17 @@
   .orders-list { display: flex; flex-direction: column; gap: 14px; }
   .order-card {
     background: var(--card); border-radius: var(--radius); border: 1px solid var(--border);
-    padding: 18px 20px; box-shadow: var(--shadow); transition: box-shadow .2s;
+    padding: 18px 20px; box-shadow: var(--shadow); transition: box-shadow .2s, opacity .2s, filter .2s;
   }
   .order-card:hover { box-shadow: var(--shadow-lg); }
+  .order-card--selesai {
+    opacity: 0.42;
+    filter: saturate(0.25) brightness(0.97);
+    background: #f3f4f6;
+    border-color: #e2e2e2;
+    box-shadow: none;
+  }
+  .order-card--selesai:hover { opacity: 0.72; filter: saturate(0.6) brightness(1); box-shadow: var(--shadow); }
   .order-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
   .order-id { font-size: 15px; font-weight: 700; color: var(--navy-dark); }
   .status-badge { font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 20px; }
@@ -736,38 +744,52 @@ const DB = {
     const today = todayStr();
     const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-    const res = await fetch(`${SUPA_URL}/rest/v1/orders?tanggal_pesan=gte.${today}T00:00:00&tanggal_pesan=lt.${tomorrowStr}T00:00:00&order=id_pesanan.asc`, { headers: H });
+    const res = await fetch(`${SUPA_URL}/rest/v1/pesanan?tanggal_pesan=gte.${today}&tanggal_pesan=lt.${tomorrowStr}&order=id_pesanan.asc&select=*,menus(name,emoji,price,kategori_menu)`, { headers: H });
     const rows = await res.json();
-    if (!res.ok) throw new Error(rows.message);
-    return rows;
+    if (!res.ok) throw new Error(rows.message || JSON.stringify(rows));
+    // Flatten joined menus data into each row for compatibility
+    return rows.map(r => ({
+      ...r,
+      nama_menu: r.menus?.name || null,
+      emoji_menu: r.menus?.emoji || '🍱',
+      kategori_menu: r.menus?.kategori_menu || r.kategori_menu || null,
+      menu_price: r.menus?.price || 0,
+    }));
   },
   async getOrdersRange(days) {
     const from = new Date(); from.setDate(from.getDate() - (days - 1));
     const fromStr = from.toISOString().slice(0, 10);
-    const res = await fetch(`${SUPA_URL}/rest/v1/orders?tanggal_pesan=gte.${fromStr}T00:00:00&order=tanggal_pesan.asc,id_pesanan.asc`, { headers: H });
+    const res = await fetch(`${SUPA_URL}/rest/v1/pesanan?tanggal_pesan=gte.${fromStr}&order=tanggal_pesan.asc,id_pesanan.asc&select=*,menus(name,emoji,price,kategori_menu)`, { headers: H });
     const rows = await res.json();
-    if (!res.ok) throw new Error(rows.message);
-    _ordersCache = rows;
-    return rows;
+    if (!res.ok) throw new Error(rows.message || JSON.stringify(rows));
+    const mapped = rows.map(r => ({
+      ...r,
+      nama_menu: r.menus?.name || null,
+      emoji_menu: r.menus?.emoji || '🍱',
+      kategori_menu: r.menus?.kategori_menu || r.kategori_menu || null,
+      menu_price: r.menus?.price || 0,
+    }));
+    _ordersCache = mapped;
+    return mapped;
   },
   async addOrder(order) {
-    const res = await fetch(`${SUPA_URL}/rest/v1/orders`, {
+    const res = await fetch(`${SUPA_URL}/rest/v1/pesanan`, {
       method: 'POST',
       headers: { ...H, 'Prefer': 'return=representation' },
       body: JSON.stringify(order)
     });
     const rows = await res.json();
-    if (!res.ok) throw new Error(rows.message);
+    if (!res.ok) throw new Error(rows.message || JSON.stringify(rows));
     return rows[0];
   },
   async updateOrder(id, fields) {
-    const res = await fetch(`${SUPA_URL}/rest/v1/orders?id_pesanan=eq.${id}`, {
+    const res = await fetch(`${SUPA_URL}/rest/v1/pesanan?id_pesanan=eq.${id}`, {
       method: 'PATCH',
       headers: { ...H, 'Prefer': 'return=representation' },
       body: JSON.stringify(fields)
     });
     const rows = await res.json();
-    if (!res.ok) throw new Error(rows.message);
+    if (!res.ok) throw new Error(rows.message || JSON.stringify(rows));
     return rows[0];
   },
   async getMenus() {
@@ -1061,7 +1083,7 @@ async function renderOrders(filter='') {
       const f = filter.toLowerCase();
       list = list.filter(o =>
         String(o.id_pesanan).includes(f) ||
-        String(o.id_pembeli).toLowerCase().includes(f) ||
+        (o.nama_pembeli || '').toLowerCase().includes(f) ||
         (o.nama_menu || '').toLowerCase().includes(f)
       );
     }
@@ -1075,13 +1097,23 @@ async function renderOrders(filter='') {
       grouped[key].push(o);
     });
 
-    el.innerHTML = Object.entries(grouped).map(([orderId, rows]) => {
+    // Sort: active orders first (newest id first), then selesai (newest id first)
+    const entries = Object.entries(grouped);
+    entries.sort(([idA, rowsA], [idB, rowsB]) => {
+      const aSelesai = rowsA[0].status_pesanan === 'Selesai';
+      const bSelesai = rowsB[0].status_pesanan === 'Selesai';
+      if (aSelesai !== bSelesai) return aSelesai ? 1 : -1;
+      return Number(idB) - Number(idA); // newest id on top
+    });
+
+    el.innerHTML = entries.map(([orderId, rows]) => {
       const first = rows[0];
+      const isSelesai = first.status_pesanan === 'Selesai';
       const itemLines = rows.map(r => `${r.jumlah_dipesan||1}x ${r.nama_menu||'?'}`).join('<br>');
       const totalBiaya = rows.reduce((s, r) => s + Number(r.biaya_total || 0), 0);
-      return `<div class="order-card">
+      return `<div class="order-card${isSelesai ? ' order-card--selesai' : ''}">
         <div class="order-top">
-          <span class="order-id">#${orderId} — ${first.nama_pembeli || first.id_pembeli}</span>
+          <span class="order-id">#${orderId} — ${first.nama_pembeli || 'Pembeli'}</span>
           <button class="remove-order-btn" onclick="removeOrder(${orderId})">
             <svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
             Hapus
@@ -1133,7 +1165,7 @@ function addItemRow(selectedName='', qty=1) {
   const row = document.createElement('div');
   row.className = 'order-item-row';
   const options = _modalMenus.map(m =>
-    `<option value="${m.name}" data-price="${m.price}" data-menu-id="${m.id||''}" data-kategori="${m.kategori||m.category||''}" ${m.name===selectedName?'selected':''}>${m.emoji||'🍱'} ${m.name} — ${fmtRp(m.price)}</option>`
+    `<option value="${m.name}" data-price="${m.price}" data-menu-id="${m.id||''}" data-kategori="${m.kategori_menu||''}" ${m.name===selectedName?'selected':''}>${m.emoji||'🍱'} ${m.name} — ${fmtRp(m.price)}</option>`
   ).join('');
   row.innerHTML = `
     <select onchange="recalcTotal()">${options}</select>
@@ -1224,14 +1256,11 @@ async function saveOrder() {
           : item.price * item.qty;
         await DB.addOrder({
           nama_pembeli: nama_pembeli || null,
-          id_menu: item.menuId || null,
-          nama_menu: item.menuName,
-          kategori_menu: item.kategori || null,
+          id_menu: item.menuId ? parseInt(item.menuId) : null,
           jumlah_dipesan: item.qty,
           tipe_pesanan,
           status_pesanan,
           tanggal_pesan,
-          tanggal_terima: null,
           biaya_total: biaya,
           cuaca: cuaca || null,
           alamat_lengkap: alamat_lengkap || null
@@ -1250,6 +1279,7 @@ async function quickUpdateStatus(id, newStatus, selectEl) {
   try {
     await DB.updateOrder(id, { status_pesanan: newStatus });
     notify(`Pesanan #${id} → "${newStatus}"`);
+    renderOrders(document.getElementById('order-search').value);
   } catch(e) {
     notify('Update gagal: ' + e.message);
     renderOrders(document.getElementById('order-search').value);
@@ -1259,7 +1289,7 @@ async function quickUpdateStatus(id, newStatus, selectEl) {
 async function removeOrder(id) {
   if (!confirm(`Hapus Order #${id}? Tindakan ini tidak bisa dibatalkan.`)) return;
   try {
-    const res = await fetch(`${SUPA_URL}/rest/v1/orders?id_pesanan=eq.${id}`, { method: 'DELETE', headers: H });
+    const res = await fetch(`${SUPA_URL}/rest/v1/pesanan?id_pesanan=eq.${id}`, { method: 'DELETE', headers: H });
     if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
     renderOrders(document.getElementById('order-search').value);
     notify(`Order #${id} berhasil dihapus.`);
