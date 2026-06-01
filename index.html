@@ -705,6 +705,23 @@ const H = {
   'X-Client-Info': 'mymeals-kost/1.0'
 };
 
+// ========== API CONFIG ==========
+const API_URL = 'https://draa11-mymealskost.hf.space';
+
+async function runPreprocess() {
+  try {
+    notify('Running preprocessing...');
+    const res = await fetch(`${API_URL}/preprocess`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    console.log('Preprocessed items:', data.items);
+    notify('Preprocessing complete!');
+    return data.items;
+  } catch(e) {
+    notify('Preprocess error: ' + e.message);
+  }
+}
+
 // Cache for chart (needs multi-day orders)
 let _ordersCache = null;
 
