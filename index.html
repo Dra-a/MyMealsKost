@@ -390,7 +390,15 @@
 
   /* Tap hint on mobile */
   @media (max-width: 900px) {
-    .chart-tap-hint {
+    .chart-spinner {
+    width: 28px; height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--orange);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .chart-tap-hint {
       display: flex; align-items: center; gap: 5px;
       font-size: 11px; color: var(--muted);
       margin-top: 8px; user-select: none; pointer-events: none;
@@ -408,7 +416,15 @@
     }
   }
   @media (min-width: 901px) {
-    .chart-tap-hint { display: none !important; }
+    .chart-spinner {
+    width: 28px; height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--orange);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .chart-tap-hint { display: none !important; }
     .card.chart-tappable { cursor: default; }
   }
 </style>
@@ -532,6 +548,10 @@
                 <option value="7" selected>Next 7 days</option>
               </select>
             </div>
+          </div>
+          <div id="chart-loading" style="display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;height:180px;">
+            <div class="chart-spinner"></div>
+            <div style="font-size:13px;color:var(--muted);" id="chart-loading-msg">Training models...</div>
           </div>
           <canvas id="orderChart" height="180"></canvas>
           <div class="chart-tap-hint">
@@ -724,9 +744,9 @@ const DB = {
     if (!res.ok) throw new Error(rows.message);
     return rows;
   },
-    async getOrdersRange(days) {
+  async getOrdersRange(days) {
     // Paginate to bypass Supabase's 1000-row cap
-    const from = new Date(); from.setDate(from.getDate() - 6);
+    const from = new Date(); from.setDate(from.getDate() - 13);
     const fromStr = from.toISOString().slice(0, 10);
     const pageSize = 1000;
     let offset = 0, allRows = [];
@@ -940,6 +960,63 @@ function doLogout() {
 function initApp() {
   setTopbarDate();
   showScreen('dashboard');
+  autoRetrain();
+}
+
+// ========== AUTO RETRAIN ==========
+let _isTraining = false;
+
+function showChartLoading(show, msg = 'Training models...') {
+  const loading = document.getElementById('chart-loading');
+  const canvas  = document.getElementById('orderChart');
+  const msgEl   = document.getElementById('chart-loading-msg');
+  if (!loading || !canvas) return;
+  if (show) {
+    loading.style.display = 'flex';
+    canvas.style.display  = 'none';
+    if (msgEl) msgEl.textContent = msg;
+    // disable dropdowns while training
+    document.getElementById('chart-menu-select').disabled = true;
+    document.getElementById('chart-days-select').disabled = true;
+  } else {
+    loading.style.display = 'none';
+    canvas.style.display  = 'block';
+    document.getElementById('chart-menu-select').disabled = false;
+    document.getElementById('chart-days-select').disabled = false;
+  }
+}
+
+async function autoRetrain() {
+  const lastTrained = localStorage.getItem('lastTrainedDate');
+  const today = todayStr();
+  if (lastTrained === today) return; // already trained today
+
+  _isTraining = true;
+  const overlay = document.getElementById('training-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  console.log('Auto-retraining models for', today, '...');
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    const res = await fetch(`${API_URL}/train`, { method: 'POST', signal: controller.signal });
+    clearTimeout(timeout);
+    const data = await res.json();
+    if (data.status === 'ok') {
+      localStorage.setItem('lastTrainedDate', today);
+      _predCache = {};
+      console.log('Auto-retrain complete:', data.models_trained, 'models trained.');
+      await onChartFilterChange();
+    }
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      console.warn('Auto-retrain timed out — will retry next login.');
+    } else {
+      console.error('Auto-retrain failed:', e);
+    }
+  } finally {
+    _isTraining = false;
+    if (overlay) overlay.style.display = 'none';
+  }
 }
 
 function setTopbarDate() {
@@ -988,17 +1065,18 @@ async function renderDashboard() {
         ).join('')
       : '<div style="color:var(--muted);font-size:13px;">No sales today yet.</div>';
 
-    // Populate menu dropdown
+    // Populate menu dropdown — disable onchange while repopulating to avoid double render
     const menuSel = document.getElementById('chart-menu-select');
     const prevMenu = menuSel.value;
+    menuSel.onchange = null;
     menuSel.innerHTML = menus.map(m =>
       `<option value="${m.name}"${m.name===prevMenu?' selected':''}>${m.name}</option>`
     ).join('');
     if (!prevMenu && menus.length) menuSel.value = menus[0].name;
+    menuSel.onchange = onChartFilterChange;
     _menusCache = menus;
-    _predCache = {}; // clear cache on each dashboard refresh
 
-    await onChartFilterChange();
+    if (!_isTraining) await onChartFilterChange();
   } catch(e) {
     notify('Dashboard error: ' + e.message);
   } finally {
@@ -1007,12 +1085,17 @@ async function renderDashboard() {
 }
 
 async function onChartFilterChange() {
+  if (_isTraining) return; // skip while training — autoRetrain will call this when done
   const menuName = document.getElementById('chart-menu-select').value;
   const days = parseInt(document.getElementById('chart-days-select').value) || 7;
-  // Fetch last 7 days for lag features + predictions
-  const orders7 = await DB.getOrdersRange(7);
-  const preds = await getPredictions(menuName, days, _menusCache, orders7);
-  renderChart(menuName, days, orders7, preds);
+  showChartLoading(true, 'Loading predictions...');
+  try {
+    const orders7 = await DB.getOrdersRange(7);
+    const preds = await getPredictions(menuName, days, _menusCache, orders7);
+    renderChart(menuName, days, orders7, preds);
+  } finally {
+    showChartLoading(false);
+  }
 }
 
 function renderChart(menuName, days, orders7, preds) {
@@ -1501,5 +1584,10 @@ function closeMobileSidebar() {
   document.getElementById('sidebar-overlay').classList.remove('show');
 }
 </script>
+  <div id="training-overlay" style="display:none;position:fixed;inset:0;background:rgba(18,40,68,0.92);z-index:9999;flex-direction:column;align-items:center;justify-content:center;gap:18px;">
+    <div class="chart-spinner" style="width:44px;height:44px;border-width:4px;"></div>
+    <div style="color:#fff;font-size:17px;font-weight:600;">Updating prediction models...</div>
+    <div style="color:rgba(255,255,255,0.6);font-size:13px;">This happens once a day. Please wait.</div>
+  </div>
 </body>
 </html>
