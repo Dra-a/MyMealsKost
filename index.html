@@ -1252,12 +1252,18 @@ async function renderOrders(filter='') {
   el.innerHTML = '<div style="color:var(--muted);font-size:14px;padding:20px 0;">Loading orders...</div>';
   try {
     let list = await DB.getOrdersToday();
+    
+    const allMenus = await DB.getMenus(); 
+    const menuLookup = Object.fromEntries(allMenus.map(m => [m.id, m.name]));
+    // --------------------------------------------------------
+
     if (filter) {
       const f = filter.toLowerCase();
       list = list.filter(o =>
         String(o.id_pesanan).includes(f) ||
         String(o.id_pembeli).toLowerCase().includes(f) ||
-        (o.nama_menu || '').toLowerCase().includes(f)
+        // Ubah pencarian filter agar mencari berdasarkan nama di lookup jika nama_menu belum ada di object asli
+        (menuLookup[o.id_menu] || '').toLowerCase().includes(f)
       );
     }
     if (!list.length) { el.innerHTML='<div style="color:var(--muted);font-size:14px;padding:20px 0;">No orders found.</div>'; return; }
@@ -1272,11 +1278,16 @@ async function renderOrders(filter='') {
 
     el.innerHTML = Object.entries(grouped).map(([orderId, rows]) => {
       const first = rows[0];
-      const itemLines = rows.map(r => `${r.jumlah_dipesan||1}x ${r.nama_menu||'?'}`).join('<br>');
+
+      const itemLines = rows.map(r => {
+        const namaMenu = menuLookup[r.id_menu] || 'Menu Tidak Diketahui';
+        return `${r.jumlah_dipesan || 1}x ${namaMenu}`;
+      }).join('<br>');
+      
       const totalBiaya = rows.reduce((s, r) => s + Number(r.biaya_total || 0), 0);
       return `<div class="order-card">
         <div class="order-top">
-          <span class="order-id">#${orderId} — ${first.nama_pembeli || first.id_pembeli}</span>
+          <span class="order-id">${first.nama_pembeli}</span>
           <button class="remove-order-btn" onclick="removeOrder(${orderId})">
             <svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
             Hapus
@@ -1420,13 +1431,10 @@ async function saveOrder() {
         await DB.addOrder({
           nama_pembeli: nama_pembeli || null,
           id_menu: item.menuId || null,
-          nama_menu: item.menuName,
-          kategori_menu: item.kategori || null,
           jumlah_dipesan: item.qty,
           tipe_pesanan,
           status_pesanan,
           tanggal_pesan,
-          tanggal_terima: null,
           biaya_total: biaya,
           cuaca: cuaca || null,
           alamat_lengkap: alamat_lengkap || null
