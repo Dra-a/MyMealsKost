@@ -494,7 +494,7 @@
       <div class="user-avatar" id="user-avatar">A</div>
       <div class="user-info">
         <div class="user-name" id="user-name-display">Admin</div>
-        <div class="user-role">Manager</div>
+        <div class="user-role" id="user-role-display">Manager</div>
       </div>
     </div>
   </aside>
@@ -944,6 +944,7 @@ async function doLogin() {
     document.getElementById('login-screen').classList.remove('active');
     document.getElementById('app').style.display = 'flex';
     document.getElementById('user-name-display').textContent = user.name;
+    document.getElementById('user-role-display').textContent = user.role;
     document.getElementById('user-avatar').textContent = user.name[0].toUpperCase();
     initApp();
   } catch(e) {
