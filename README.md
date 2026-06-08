@@ -1,5 +1,5 @@
 # MyMealsKost
 Aplikasi berbasis web untuk mengelola bisnis meal prep 'MyMealsKost' yang dijalankan oleh mahasiswa Telkom University
 
-Web aplikasi ini telah di deploy melalui service dari Netlify, dan dapat diakses melalui link berikut
+Web aplikasi ini telah di deploy melalui service dari Vercel, dan dapat diakses melalui link berikut
 https://mymealskost.vercel.app/
