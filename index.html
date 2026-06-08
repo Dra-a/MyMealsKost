@@ -1044,7 +1044,7 @@ async function renderDashboard() {
   try {
     const [todayOrders, menus] = await Promise.all([DB.getOrdersToday(), DB.getMenus()]);
     const revenue = todayOrders.reduce((s,o) => s + Number(o.biaya_total), 0);
-    const pending = todayOrders.filter(o => o.status_pesanan === 'Diproses').length;
+    const pending = todayOrders.filter(o => o.status_pesanan !== 'Selesai').length;
 
     document.getElementById('stat-orders').textContent = todayOrders.length;
     document.getElementById('stat-revenue').textContent = fmtRp(revenue);
